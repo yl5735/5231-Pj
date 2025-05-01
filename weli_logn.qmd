@@ -1,0 +1,109 @@
+---
+title: "Weli_logn"
+format: html
+editor: visual
+---
+
+## Lognormal
+```{r}
+
+final_vars <- c("overall_survival_months", "overall_survival",
+                "age_at_diagnosis", "tumor_size", "tumor_stage",
+                "neoplasm_histologic_grade", "er_status", "pr_status",
+                "type_of_breast_surgery", "chemotherapy", "hormone_therapy",
+                "radio_therapy", "tp53", "tp53_mut_bin")
+
+df_model_lognormal <- df %>%
+  select(all_of(final_vars)) %>%
+  filter(overall_survival_months > 0) %>%
+  na.omit()
+
+```
+
+```{r}
+aft_formula <- as.formula(paste("Surv(overall_survival_months, overall_survival) ~", 
+                                paste(final_vars[-c(1,2)], collapse = " + ")))
+
+aft_lognormal <- survreg(aft_formula, data = df_model_lognormal, dist = "lognormal")
+
+summary(aft_lognormal)
+```
+
+
+```{r}
+library(ggplot2)
+
+coef_df <- as.data.frame(summary(aft_lognormal)$table)
+coef_df$Variable <- rownames(coef_df)
+coef_df <- coef_df[coef_df$Variable != "(Intercept)", ]
+
+ggplot(coef_df, aes(x = reorder(Variable, Value), y = Value)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Lognormal AFT Coefficients", y = "Estimate", x = "")
+
+```
+
+
+```{r}
+library(survival)
+library(survminer)
+
+
+km_fit <- survfit(Surv(overall_survival_months, overall_survival) ~ 1, 
+                  data = df_model_lognormal)
+
+# AFT 
+aft_pred <- predict(aft_lognormal, type = "response")
+df_model_lognormal$pred_time <- aft_pred
+
+
+ggsurvplot(km_fit, conf.int = TRUE, risk.table = TRUE,
+           ggtheme = theme_minimal(),
+           title = "Kaplan-Meier vs Lognormal Prediction")
+
+
+hist(aft_pred, main = "Lognormal Predicted Survival Time", 
+     xlab = "Time (months)", col = "skyblue", breaks = 30)
+
+```
+
+
+```{r}
+ggsurvplot(km_fit, fun = "cloglog", 
+           title = "log(-log(Survival)) vs log(Time)", 
+           ggtheme = theme_minimal())
+
+
+```
+
+```{r}
+# KM 
+fit_group <- survfit(Surv(overall_survival_months, overall_survival) ~ tp53_mut_bin, 
+                     data = df_model_lognormal)
+
+ggsurvplot(fit_group, risk.table = TRUE,
+           palette = c("blue", "red"),
+           ggtheme = theme_minimal(),
+           title = "Kaplan-Meier by TP53 Mutation")
+
+```
+
+```{r}
+survdiff(Surv(overall_survival_months, overall_survival) ~ tp53_mut_bin,
+         data = df_model_lognormal)
+
+```
+
+
+```{r}
+resid_val <- resid(aft_lognormal, type = "response")
+plot(df_model_lognormal$pred_time, resid_val,
+     xlab = "Predicted Time", ylab = "Residual",
+     main = "AFT Model Residuals")
+abline(h = 0, col = "red", lty = 2)
+
+
+```
+
