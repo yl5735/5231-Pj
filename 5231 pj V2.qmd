@@ -1,0 +1,247 @@
+---
+title: "5231 pj V1"
+format: html
+editor: visual
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(survival)
+library(survminer)
+library(ggplot2)
+library(corrplot)
+library(glmnet)
+library(flexsurv)
+```
+
+```{r}
+df <- read.csv('~/Downloads/METABRIC_RNA_Mutation.csv')
+```
+
+```{r}
+#data selection: we choose clinical data and the gene we interested:tp53
+#tp53: This gene is consider to have a tumor suppressor effect
+df$tp53_mut_bin <- ifelse(df$tp53_mut=='0', 0, 1)
+df_model<-df %>% select(overall_survival_months,overall_survival,age_at_diagnosis,tumor_size,tumor_stage,neoplasm_histologic_grade,er_status,pr_status,type_of_breast_surgery,chemotherapy,hormone_therapy,radio_therapy,tp53,tp53_mut_bin)
+```
+
+```{r}
+df_model$age_group <- ifelse(df_model$age_at_diagnosis <= 60, "≤ 60", "> 60")
+df_model$size_group <- ifelse(df_model$tumor_size <= 20, "≤ 20mm", "> 20mm")
+```
+
+```{r}
+#感觉hist不适合0，1的数据，你们有啥想法么
+numeric_df <- df_model %>% select(where(is.numeric))
+numeric_vars <- names(numeric_df)
+
+par(mfrow = c(3, 3))  
+
+for (col in numeric_vars) {
+  hist(df_model[[col]],
+       main = paste("Histogram of", col),
+       xlab = col)
+}
+```
+
+```{r}
+cor_mat <- cor(numeric_df, use = "complete.obs")
+corrplot(cor_mat, method = "color", type = "upper", 
+         tl.cex = 0.8, tl.col = "black", order = "hclust")
+```
+
+```{r}
+#KM plot
+#looking for group feature,I assume the unique length less than 3 is also group not numeric
+group_vars <- names(df_model)[sapply(df_model, function(x) {
+  is.factor(x) || is.character(x) || (is.numeric(x) && length(unique(x)) <= 3)
+})]
+group_vars <- group_vars[group_vars != "overall_survival"]
+for (var in group_vars) {
+  formula <- as.formula(paste("Surv(overall_survival_months, overall_survival) ~", var))
+  model <- survfit(formula, data = df_model)
+  
+  model$call <- list(formula = formula)
+  
+  print(ggsurvplot(model, data = df_model,
+           risk.table = TRUE,
+           title = paste("KM curve by", var),
+           ggtheme = theme_minimal()))
+}
+```
+
+```{r}
+#Cumulative Hazard Plot
+for (var in group_vars) {
+  formula <- as.formula(paste("Surv(overall_survival_months, overall_survival) ~", var))
+  model <- survfit(formula, data = df_model)
+  
+  model$call <- list(formula = formula)
+  
+  print(ggsurvplot(model,fun ="cumhaz", data = df_model,
+           risk.table = TRUE,
+           title = paste("KM curve by", var),
+           ggtheme = theme_minimal()))
+}
+```
+
+```{r}
+get_cox <- function(var, df){
+  formula <- as.formula(paste("Surv(overall_survival_months, overall_survival) ~", var))
+  model <- coxph(formula, data = df_model)
+  var1 <- rownames(summary(model)$coefficients)
+  p_value <- summary(model)$coefficients[,"Pr(>|z|)"]
+  hr <- summary(model)$coefficients[, "exp(coef)"]
+  return(list(variable = var1,
+               p_value = p_value,
+               harzed_ratio = hr))
+}
+
+cox_var <- c(
+  "age_at_diagnosis", "tumor_size", "tumor_stage", "neoplasm_histologic_grade",
+  "er_status", "pr_status", "type_of_breast_surgery", "chemotherapy",
+  "hormone_therapy", "radio_therapy", "tp53", "tp53_mut_bin","age_group","size_group"
+)
+cox_result <- lapply(cox_var, get_cox, df = df_model)
+cox_result_df <- do.call(rbind, lapply(cox_result, as.data.frame))
+```
+
+```{r}
+cox_result_df
+```
+
+```{r}
+df_cox <- df_model %>% select(-age_group,-size_group,-tp53_mut_bin )
+cox_fit_total <- coxph(Surv(overall_survival_months,overall_survival) ~ ., data = df_cox)
+summary(cox_fit_total)
+```
+
+```{r}
+ggforest(cox_fit_total, data = df_model)
+```
+
+```{r}
+#这个我感觉没啥用可以删了
+df_lasso <- df_model[df_model$overall_survival_months > 0, ]
+df_lasso <- na.omit(df_lasso)
+X <- model.matrix(Surv(overall_survival_months,overall_survival) ~ ., data = df_lasso)[, -1]
+y <- Surv(df_lasso$overall_survival_months,df_lasso$overall_survival)
+cox_lasso <- cv.glmnet(X, y, family = "cox", alpha = 1)
+selected_vars <- rownames(coef(cox_lasso))[
+  as.vector(coef(cox_lasso, s = "lambda.min")) != 0
+]
+selected_vars
+```
+
+```{r}
+reg_feature <- c("overall_survival_months", "overall_survival","tumor_stage","neoplasm_histologic_grade","type_of_breast_surgery","chemotherapy","hormone_therapy","tp53")
+df_data <- df_model %>%
+  select(all_of(reg_feature)) %>%
+  filter(overall_survival_months > 0) %>%
+  na.omit()
+```
+
+```{r}
+aft_formula <- as.formula(paste("Surv(overall_survival_months, overall_survival) ~", 
+                                paste(reg_feature[-c(1,2)], collapse = " + ")))
+```
+
+```{r}
+model_lognormal <- survreg(aft_formula, data = df_data, dist = "lognormal")
+model_weibull <- survreg(aft_formula, data = df_data, dist = "weibull")
+model_exponential <- survreg(aft_formula, data = df_data, dist = "exponential")
+model_loglogistic <- survreg(aft_formula, data = df_data, dist = "loglogistic")
+```
+
+```{r}
+AIC(model_lognormal, model_weibull, model_exponential, model_loglogistic)
+```
+
+```{r}
+sapply(list(lognormal = model_lognormal,
+            weibull = model_weibull,
+            exponential = model_exponential,
+            loglogistic = model_loglogistic), logLik)
+```
+
+```{r}
+km_fit <- survfit(Surv(overall_survival_months, overall_survival) ~ 1, data = df_data)
+fit_exp  <- flexsurvreg(Surv(overall_survival_months, overall_survival) ~ 1, data = df_data, dist = "exponential")
+fit_weib <- flexsurvreg(Surv(overall_survival_months, overall_survival) ~ 1, data = df_data, dist = "weibull")
+fit_ln   <- flexsurvreg(Surv(overall_survival_months, overall_survival) ~ 1, data = df_data, dist = "lnorm")
+fit_ll   <- flexsurvreg(Surv(overall_survival_months, overall_survival) ~ 1, data = df_data, dist = "llogis")
+
+t_grid <- seq(0, max(df_data$overall_survival_months), length.out = 200)
+
+df_pred <- data.frame(
+  time = t_grid,
+  exponential = summary(fit_exp, t = t_grid)[[1]]$est,
+  weibull     = summary(fit_weib, t = t_grid)[[1]]$est,
+  lognormal   = summary(fit_ln, t = t_grid)[[1]]$est,
+  loglogistic = summary(fit_ll, t = t_grid)[[1]]$est
+)
+
+df_long <- tidyr::pivot_longer(df_pred, -time, names_to = "model", values_to = "surv")
+
+
+km_df <- data.frame(time = km_fit$time,
+                    surv = km_fit$surv,
+                    model = "Kaplan-Meier")
+
+
+plot_df <- rbind(df_long, km_df)
+
+ggplot(plot_df, aes(x = time, y = surv, color = model)) +
+  geom_line(size = 1.2) +
+  labs(title = "Survival Curves: KM vs Parametric Models",
+       x = "Time", y = "Survival Probability") +
+  theme_minimal()
+
+```
+
+```{r}
+pred_result <- list(lognormal = 0, weibull = 0, exponential = 0, loglogistic = 0)
+for (name in names(pred_result)) {
+  model_obj <- get(paste0("model_", name))  
+  model_pred <- predict(model_obj, type = "response")
+  pred_result[[name]] <- model_pred 
+}
+```
+
+```{r}
+for(name in names(pred_result)){
+  hist(pred_result[[name]], main = paste(name,"Predicted Survival Time"), 
+     xlab = "Time (months)",col = "skyblue" ,breaks = 30)
+}
+```
+
+```{r}
+resid_result <- list(lognormal = 0, weibull = 0, exponential = 0, loglogistic = 0)
+for (name in names(resid_result)) {
+  model_obj <- get(paste0("model_", name))  
+  model_resid <- resid(model_obj, type = "response")
+  resid_result[[name]] <- model_resid
+}
+```
+
+```{r}
+for(name in names(resid_result)){
+  plot(pred_result[[name]],resid_result[[name]],
+       xlab = "Predicted Time", ylab = "Residual",
+       main = paste(name,"Model Residuals"))
+}
+```
+
+```{r}
+km_fit <- survfit(Surv(overall_survival_months, overall_survival) ~ 1, 
+                  data = df_data)
+ggsurvplot(km_fit, fun = "cloglog", 
+           title = "log(-log(Survival)) vs log(Time)", 
+           ggtheme = theme_minimal())
+```
+
+```{r}
+survdiff(Surv(overall_survival_months, overall_survival) ~ tp53_mut_bin,
+         data = df_model)
+```
