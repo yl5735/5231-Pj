@@ -14,14 +14,23 @@ data=read.csv('METABRIC_RNA_Mutation.csv')
 library(ggplot2)
 library(survival)
 library(survminer)
-library(corrplot)
 library(dplyr)
 library(tidyr)
 library(patchwork)
+library(ggcorrplot)
 ```
 
 ```{r}
-data1= data %>%
+dim(data)
+```
+```{r}
+data_clean=drop_na(data)
+dim(data_clean)
+```
+
+
+```{r}
+data1= data_clean %>%
   select(overall_survival_months,
          overall_survival,
          age_at_diagnosis,
@@ -31,171 +40,62 @@ data1= data %>%
          chemotherapy,
          hormone_therapy,
          radio_therapy,
-         tp53,
-         tp53_mut)%>%
-  mutate(tumor_stage = as.factor(tumor_stage),
-         neoplasm_histologic_grade = as.factor(neoplasm_histologic_grade),
-         chemotherapy = as.factor(chemotherapy),
-         hormone_therapy = as.factor(hormone_therapy),
-         radio_therapy = as.factor(radio_therapy),
-         tp53_mut_bin= if_else(tp53_mut == "0", 0, 1),
-         tp53_mut_bin = as.factor(tp53_mut_bin))%>%
-  drop_na()
-```
-
-```{r}
-str(data1);dim(data1)
-```
-
-```{r}
-data1$survival_status <- factor(data1$overall_survival, levels = c(0, 1), labels = c("Survived", "Died"))
-
-p1 <- ggplot(data1, aes(x = age_at_diagnosis, fill = survival_status)) +
-  geom_histogram(position = "identity", alpha = 0.6, bins = 30, color = "white") +
-  labs(title = "Age at Diagnosis", x = "Age",  fill = NULL, color = NULL) +
-  scale_fill_manual(values = c("seagreen3", "indianred1")) +
-  theme_minimal()
-
-p2 <- ggplot(data1, aes(x = tumor_size, fill = survival_status)) +
-  geom_histogram(position = "identity", alpha = 0.6, bins = 30, color = "white") +
-  labs(title = "Tumor Size", x = "Size (mm)",  fill = NULL, color = NULL) +
-  scale_fill_manual(values = c("skyblue", "tomato")) +
-  theme_minimal()
-
-p3 <- ggplot(data1, aes(x = overall_survival_months, fill = survival_status)) +
-  geom_histogram(position = "identity", alpha = 0.6, bins = 30, color = "white") +
-  labs(title = "Survival Time", x = "Months", fill = NULL, color = NULL) +
-  scale_fill_manual(values = c("lightblue", "lightcoral")) +
-  theme_minimal()
-
-p4 <- ggplot(data1, aes(x = tp53, fill = survival_status)) +
-  geom_histogram(position = "identity", alpha = 0.6, bins = 30, color = "white") +
-  labs(title = "TP53 Gene", x = "TP53", fill = NULL, color = NULL)+
-  scale_fill_manual(values = c("gold", "firebrick"))+
-  theme_minimal()
-
-(p1 | p2) / (p3 | p4)+
-  plot_annotation(title = "Distribution of Key Variables by Survival Status")
-
-```
-
-For the distribution of all numerical data, some of them are normally distributed (like tumor_stage, and age_at_diagnosis), but most of the features are right skewed with a lot of outliers (lymph_nodes_examined_positive, mutation_count, and tumor_size). We decided to keep the outliers, as they are very important in healthcare data.
-
-
-```{r}
-c1=ggplot(data1, aes(x = tumor_stage)) +
-  geom_bar(fill='steelblue') +
-  labs(title = "Tumor Stage", x = "Stage")
-
-c2=ggplot(data1, aes(x = neoplasm_histologic_grade)) +
-  geom_bar(fill='steelblue') +
-  labs(title = "Histologic Grade", x = "Grade")
-
-c3=ggplot(data1, aes(x = chemotherapy)) +
-  geom_bar(fill='steelblue') +
-  labs(title = "Chemotherapy", x = "Chemotherapy")
-
-c4=ggplot(data1, aes(x = hormone_therapy)) +
-  geom_bar(fill='steelblue') +
-  labs(title = "Hormone Therapy", x = "Hormone Therapy")
-
-c5=ggplot(data1, aes(x = radio_therapy)) +
-  geom_bar(fill='steelblue') +
-  labs(title = "Radiotherapy", x = "Radiotherapy")
-
-c6=ggplot(data1, aes(x = tp53_mut_bin)) +
-  geom_bar(fill='steelblue') +
-  labs(title = "TP53 Mutation", x = "TP53 Mutation")
-
-(c1 | c2 | c3) /
-(c4 | c5 | c6)
-```
-
-```{r}
-make_pie <- function(data1, var, title_text) {
-  df <- data1 %>%
-    count(!!sym(var)) %>%
-    mutate(percent = round(100 * n / sum(n), 1),
-           label = paste0(!!sym(var), "\n", percent, "%"))
-  ggplot(df, aes(x = "", y = n, fill = !!sym(var))) +
-    geom_col(width = 1) +
-    coord_polar(theta = "y") +
-    geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3) +
-    labs(title = title_text, x = NULL, y = NULL) +
-    theme_void() +
-    theme(legend.position = "none")
-}
-p1 <- make_pie(data1, "tumor_stage", "Tumor Stage")
-p2 <- make_pie(data1, "neoplasm_histologic_grade", "Histologic Grade")
-p3 <- make_pie(data1, "chemotherapy", "Chemotherapy")
-p4 <- make_pie(data1, "hormone_therapy", "Hormone Therapy")
-p5 <- make_pie(data1, "radio_therapy", "Radiotherapy")
-p6 <- make_pie(data1, "tp53_mut_bin", "TP53 Mutation")
-
-(p1 | p2 | p3) /
-(p4 | p5 | p6)
-```
-
-```{r}
-data3= data %>%
-  select(overall_survival_months,
-         overall_survival,
-         age_at_diagnosis,
-         tumor_size,
-         tumor_stage,
-         chemotherapy,
-         hormone_therapy,
-         radio_therapy,
          er_status,
          her2_status,
-         type_of_breast_surgery)%>%
-  mutate(tumor_stage = as.factor(tumor_stage),
-         chemotherapy = as.factor(chemotherapy),
-         hormone_therapy = as.factor(hormone_therapy),
-         radio_therapy = as.factor(radio_therapy),
-         er_status = factor(er_status),
-         her2_status = factor(her2_status),
-         type_of_breast_surgery =
-           factor(type_of_breast_surgery))%>%
-  drop_na()
-head(data3)
+         pr_status,
+         tp53,
+         tp53_mut)%>%
+  mutate(
+    overall_survival_months = overall_survival_months/12,
+    tp53_mut= if_else(tp53_mut == "0", 0, 1),
+    er_status = factor(er_status, levels = c("Negative", "Positive")),
+    pr_status = factor(pr_status, levels = c("Negative", "Positive")),
+    her2_status = factor(her2_status, levels = c("Negative", "Positive")),
+    er_status = as.numeric(er_status) - 1,
+    pr_status = as.numeric(pr_status) - 1,
+    her2_status = as.numeric(her2_status) - 1)%>%
+  rename(time=overall_survival_months,
+         status=overall_survival)
+numeric
 ```
 
 ```{r}
-library(psych)
-describe(data3)
+table(data1$status)
+summary(data1$time)
 ```
 ```{r}
-data3$age_group <- ifelse(data3$age_at_diagnosis <= 60, "≤ 60", "> 60")
-data3$size_group <- ifelse(data3$tumor_size <= 20, "≤ 20mm", "> 20mm")
-
-surv_obj <- Surv(data3$overall_survival_months, data3$overall_survival)
-```
-
-```{r}
-fit_age <- survfit(surv_obj ~ age_group, data = data3)
-ggsurvplot(fit_age, data = data3, pval = TRUE,
-           title = "Survival Curve by Age"
-           )
+ggplot(data1, aes(x = time)) +
+  geom_histogram(binwidth = 2, fill = "steelblue", color = "white") +
+  facet_wrap(~ status, nrow = 1) +
+  labs(
+    x = "Time (Years)",
+    y = "Frequency")
 ```
 
 
 ```{r}
-fit_size <- survfit(surv_obj ~ size_group, data = data3)
-ggsurvplot(fit_size, data = data3, pval = TRUE,
-                     title = "Survival by Tumor Size")
+ggcorrplot(cor(data1), method = "circle", 
+           lab = TRUE, lab_size = 2, 
+           title = "Correlation Matrix", 
+           colors = c("red", "white", "blue"), 
+           ggtheme = theme_minimal())
+```
+```{r}
+univ_cox=coxph(Surv(time, status)~tp53_mut, data=data1)
+univ_cox
 ```
 
 ```{r}
-fit_er <- survfit(Surv(overall_survival_months, overall_survival) ~ er_status, data = data3)
-ggsurvplot(fit_er, data = data3, pval = TRUE, title = "Survival Curve by ER Status")
+mult_cox=coxph(Surv(time, status)~., data=data1)
 ```
+
 ```{r}
-fit_surg <- survfit(Surv(overall_survival_months, overall_survival) ~ type_of_breast_surgery, data = data3)
-ggsurvplot(fit_er, data = data3, pval = TRUE, title = "Survival Curve by type_of_breast_surgery")
-
+summary(mult_cox)
 ```
 
+```{r}
+round(summary(mult_cox)$coefficients, 2)
+```
 
 
 
